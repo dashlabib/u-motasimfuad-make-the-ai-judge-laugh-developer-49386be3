@@ -4,11 +4,14 @@
 
 The excuse lives in ``entry.txt`` next to this file. This program
 reads it, checks it against the bounty gate (UTF-8 text, a single
-line, 1 to 200 characters, not only white space), writes the exact
-text to ``entry.txt`` in the output directory, and reads it back to
-confirm the published bytes match. Standard library only: no network
-access, no clock reads, no randomness, so two runs always produce
-identical output.
+line, 1 to 200 characters, not only white space, no control
+characters, and no leading or trailing white space around the
+line), writes the exact text to ``entry.txt`` in the output
+directory, and reads it back to confirm the published bytes match.
+A missing ``entry.txt`` or one that is not valid UTF-8 is reported
+as a clean error instead of a traceback. Standard library only: no
+network access, no clock reads, no randomness, so two runs always
+produce identical output.
 
 The output directory is ``$MAKEFUN_OUTPUT_DIR`` when set, else
 ``/output``. Pass ``--output-dir <dir>`` to choose it on the command
@@ -26,8 +29,18 @@ MAX_CHARS = 200
 
 def load_line() -> str:
     here = Path(__file__).resolve().parent
-    text = (here / "entry.txt").read_text(encoding="utf-8")
-    return text.strip()
+    try:
+        raw = (here / "entry.txt").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise SystemExit("entry.txt is missing next to main.py")
+    except UnicodeDecodeError:
+        raise SystemExit("entry.txt is not valid UTF-8")
+    text = raw.strip()
+    if raw.strip("\r\n") != text:
+        raise SystemExit(
+            "entry.txt has leading or trailing white space around the entry"
+        )
+    return text
 
 
 def validate(text: str) -> None:
@@ -39,6 +52,12 @@ def validate(text: str) -> None:
         )
     if "\n" in text or "\r" in text:
         raise SystemExit("entry must be a single line")
+    bad = [ch for ch in text if ord(ch) < 32 or ord(ch) == 127]
+    if bad:
+        raise SystemExit(
+            "entry contains control characters: "
+            + ", ".join(f"U+{ord(ch):04X}" for ch in sorted(set(bad)))
+        )
 
 
 def parse_args(argv=None):
@@ -55,7 +74,8 @@ def main(argv=None) -> int:
     text = load_line()
     validate(text)
     if args.verify_only:
-        print(f"Valid: {len(text)} characters")
+        words = len(text.split())
+        print(f"Valid: {len(text)} characters, {words} words")
         return 0
     out_dir = Path(args.output_dir or os.environ.get("MAKEFUN_OUTPUT_DIR", "/output"))
     out_dir.mkdir(parents=True, exist_ok=True)
